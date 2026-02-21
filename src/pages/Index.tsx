@@ -1,5 +1,6 @@
 import { useNavigate } from "react-router-dom";
 import { useEffect, useState } from "react";
+import { supabase } from "@/lib/supabase";
 import heroBg from "@/assets/hero-bg.jpg";
 
 export default function Index() {
@@ -7,6 +8,21 @@ export default function Index() {
   const [visible, setVisible] = useState(false);
 
   useEffect(() => {
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
+      if (session) {
+        // Only redirect to feed if the user has a completed profile
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select("id")
+          .eq("id", session.user.id)
+          .maybeSingle();
+        if (profile) {
+          navigate("/feed");
+        }
+        // No profile → stay on landing so they can hit Start Crushing → /onboarding
+      }
+    });
+
     setTimeout(() => setVisible(true), 100);
   }, []);
 
@@ -77,7 +93,7 @@ export default function Index() {
           {/* CTA */}
           <div className={`mt-auto pt-10 flex flex-col gap-3 transition-all duration-700 delay-500 ${visible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-6"}`}>
             <button
-              onClick={() => navigate("/auth")}
+              onClick={() => navigate("/onboarding")}
               className="btn-brand w-full py-4 rounded-2xl font-display font-bold text-lg text-white"
             >
               Start Crushing 💜

@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Your Login Code</title>
+  <style>
+    body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; background-color: #f4f4f5; margin: 0; padding: 0; }
+    .container { max-width: 480px; margin: 40px auto; background: #ffffff; border-radius: 24px; box-shadow: 0 4px 24px rgba(0,0,0,0.08); overflow: hidden; }
+    .header { background: linear-gradient(135deg, #8B5CF6 0%, #D946EF 100%); padding: 40px 20px; text-align: center; }
+    .header h1 { color: white; margin: 0; font-size: 28px; font-weight: 800; letter-spacing: -0.5px; }
+    .content { padding: 40px 30px; text-align: center; }
+    .code-box { background: #f4f4f5; border-radius: 16px; padding: 20px; margin: 24px 0; font-family: monospace; font-size: 32px; font-weight: bold; letter-spacing: 8px; color: #18181b; border: 2px dashed #e4e4e7; }
+    .footer { padding: 20px; text-align: center; color: #71717a; font-size: 12px; background: #fafafa; border-top: 1px solid #f4f4f5; }
+    .btn { display: inline-block; background: #18181b; color: white; text-decoration: none; padding: 12px 24px; border-radius: 12px; font-weight: bold; margin-top: 20px; }
+    p { color: #52525b; line-height: 1.6; font-size: 16px; margin-bottom: 20px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>Crushere</h1>
+    </div>
+    <div class="content">
+      <p>Hey there! 👋</p>
+      <p>Here is your magic code to log in. It expires in 5 minutes.</p>
+      
+      <div class="code-box">{{ .Token }}</div>
+      
+      <p>If you didn't request this, you can safely ignore this email.</p>
+    </div>
+    <div class="footer">
+      &copy; 2024 Crushere Connect. All rights reserved.
+    </div>
+  </div>
+</body>
+</html>

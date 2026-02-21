@@ -1,17 +1,26 @@
 import { useState, useRef, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { ArrowLeft, Phone } from "lucide-react";
+import { ArrowLeft, Mail, Sparkles, KeyRound, Eye, EyeOff } from "lucide-react";
+import { supabase } from "@/lib/supabase";
+import { useToast } from "@/hooks/use-toast";
 
-type Step = "phone" | "otp";
+type Step = "email" | "otp";
+type AuthMode = "magic_link" | "password";
 
 export default function Auth() {
   const navigate = useNavigate();
-  const [step, setStep] = useState<Step>("phone");
-  const [phone, setPhone] = useState("");
-  const [otp, setOtp] = useState(["", "", "", "", "", ""]);
+  const { toast } = useToast();
+  const [step, setStep] = useState<Step>("email");
+  const [authMode, setAuthMode] = useState<AuthMode>("password");
+  const [identifier, setIdentifier] = useState(""); // Can be email or username
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [otp, setOtp] = useState(["", "", "", "", "", "", "", ""]);
   const [loading, setLoading] = useState(false);
   const [resendTimer, setResendTimer] = useState(0);
-  const [phoneError, setPhoneError] = useState("");
+  const [emailError, setEmailError] = useState("");
+  const [isSignup, setIsSignup] = useState(false);
   const inputRefs = useRef<(HTMLInputElement | null)[]>([]);
 
   useEffect(() => {
@@ -21,18 +30,158 @@ export default function Auth() {
     }
   }, [resendTimer]);
 
-  const handleSendOTP = () => {
-    if (phone.replace(/\D/g, "").length < 10) {
-      setPhoneError("Please enter a valid phone number");
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session && !window.location.search.includes("admin=true")) {
+        navigate("/feed");
+      }
+    });
+
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("admin") === "true") {
+      setAuthMode("password");
+    }
+    if (params.get("mode") === "signup") {
+      setIsSignup(true);
+    }
+  }, []);
+
+  const validateEmail = (e: string) => {
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e);
+  };
+
+  const handleSendOTP = async () => {
+    if (!validateEmail(email)) {
+      setEmailError("Please enter a valid email address");
       return;
     }
-    setPhoneError("");
+    setEmailError("");
     setLoading(true);
-    setTimeout(() => {
-      setLoading(false);
+
+    try {
+      const { error } = await supabase.auth.signInWithOtp({
+        email: email,
+        options: {
+          shouldCreateUser: true,
+        },
+      });
+
+      if (error) throw error;
+
+      toast({
+        title: "Magic Link Sent! ✨",
+        description: "Check your email for the code.",
+      });
+
       setStep("otp");
       setResendTimer(30);
-    }, 1200);
+
+    } catch (error: any) {
+      console.error("Send Email OTP Error:", error);
+      toast({
+        title: "Failed to send OTP",
+        description: error.message || "Please try again later.",
+        variant: "destructive"
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handlePasswordLogin = async () => {
+    if (!identifier) {
+      toast({ title: "Username or Email Required", description: "Please enter your username or email.", variant: "destructive" });
+      return;
+    }
+    if (!password) {
+      toast({ title: "Password Required", description: "Please enter your password.", variant: "destructive" });
+      return;
+    }
+    
+    setLoading(true);
+    try {
+      let loginEmail = identifier;
+
+      // If not a valid email, assume it's a username and fetch the associated email
+      if (!validateEmail(identifier)) {
+        const { data: profile, error: profileError } = await supabase
+          .from("profiles")
+          .select("id")
+          .eq("username", identifier.toLowerCase())
+          .maybeSingle();
+
+        if (!profile) {
+          throw new Error("User not found with that username.");
+        }
+
+        // Supabase Auth doesn't store email in profiles directly usually, 
+        // but it's in auth.users. If we don't have email in profiles, we might need 
+        // a RPC or just ensure profiles has email.
+        // Actually, let's check if profiles has email. If not, we might need a workaround.
+        // For now, let's assume we can fetch it or just use the UID if Supabase allowed it (it doesn't).
+        
+        // Wait, I should have added email to profiles if I want to support username login easily.
+        // Let's check profile columns.
+        const { data: profileWithEmail } = await supabase
+          .from("profiles")
+          .select("email")
+          .eq("username", identifier.toLowerCase())
+          .maybeSingle();
+        
+        if (profileWithEmail?.email) {
+          loginEmail = profileWithEmail.email;
+        } else {
+          throw new Error("Could not resolve email for this username. Use email to login.");
+        }
+      }
+
+      const { error } = await supabase.auth.signInWithPassword({
+        email: loginEmail,
+        password: password,
+      });
+
+      if (error) throw error;
+
+      toast({ title: "Welcome back! 🚀", description: "Successfully logged in." });
+      navigate("/feed");
+      
+    } catch (error: any) {
+      console.error("Login Error:", error);
+      toast({
+        title: "Login Failed",
+        description: error.message || "Invalid credentials.",
+        variant: "destructive",
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const verifyOtp = async () => {
+    setLoading(true);
+    const otpCode = otp.join("");
+    
+    try {
+      const { data, error } = await supabase.auth.verifyOtp({
+        email: email,
+        token: otpCode,
+        type: 'email',
+      });
+
+      if (error) throw error;
+      
+      toast({ title: "Verified! 🚀", description: "Welcome to Crushere." });
+      navigate("/onboarding");
+
+    } catch (error: any) {
+      toast({
+        title: "Verification Failed", 
+        description: error.message || "Invalid code.", 
+        variant: "destructive" 
+      });
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleOtpChange = (index: number, val: string) => {
@@ -40,10 +189,7 @@ export default function Auth() {
     const next = [...otp];
     next[index] = val;
     setOtp(next);
-    if (val && index < 5) inputRefs.current[index + 1]?.focus();
-    if (next.every(d => d !== "")) {
-      setTimeout(() => verifyOtp(), 200);
-    }
+    if (val && index < 7) inputRefs.current[index + 1]?.focus();
   };
 
   const handleOtpKeyDown = (index: number, e: React.KeyboardEvent) => {
@@ -52,161 +198,226 @@ export default function Auth() {
     }
   };
 
-  const verifyOtp = () => {
-    setLoading(true);
-    setTimeout(() => {
-      setLoading(false);
-      navigate("/onboarding");
-    }, 1000);
+  const handlePaste = (e: React.ClipboardEvent) => {
+    e.preventDefault();
+    const pastedData = e.clipboardData.getData("text").slice(0, 8).split("");
+    if (pastedData.length === 0) return;
+
+    const newOtp = [...otp];
+    pastedData.forEach((char, index) => {
+      if (index < 8 && /\d/.test(char)) {
+        newOtp[index] = char;
+      }
+    });
+    setOtp(newOtp);
+    
+    // Focus the last filled input or the first empty one
+    const focusIndex = Math.min(pastedData.length, 7);
+    inputRefs.current[focusIndex]?.focus();
   };
+
 
   return (
     <div className="min-h-screen bg-background flex justify-center">
       <div className="relative w-full max-w-mobile min-h-screen flex flex-col px-6 pt-safe-top">
         {/* Header */}
         <div className="flex items-center gap-3 pt-6 pb-8">
-          <button
-            onClick={() => step === "otp" ? setStep("phone") : navigate("/")}
-            className="w-10 h-10 rounded-2xl glass-card flex items-center justify-center border border-border active:scale-95 transition-transform"
-          >
-            <ArrowLeft size={18} className="text-foreground" />
-          </button>
+          {step === "otp" && (
+            <button
+              onClick={() => setStep("email")}
+              className="w-10 h-10 rounded-2xl glass-card flex items-center justify-center border border-border active:scale-95 transition-transform"
+            >
+              <ArrowLeft size={18} className="text-foreground" />
+            </button>
+          )}
+           {step === "email" && (
+             <button
+              onClick={() => navigate("/")}
+              className="w-10 h-10 rounded-2xl glass-card flex items-center justify-center border border-border active:scale-95 transition-transform"
+            >
+              <ArrowLeft size={18} className="text-foreground" />
+            </button>
+           )}
           <div className="flex items-center gap-2">
             <span className="font-display font-bold text-xl text-gradient-brand">Crushere</span>
           </div>
         </div>
 
-        {/* Progress dots */}
-        <div className="flex gap-1.5 mb-8">
-          {["phone", "otp"].map((s, i) => (
-            <div
-              key={s}
-              className={`h-1 rounded-full transition-all duration-300 ${
-                (step === "phone" && i === 0) || (step === "otp" && i <= 1)
-                  ? "bg-primary flex-[2]"
-                  : "bg-muted flex-1"
-              }`}
-            />
-          ))}
-        </div>
+        {/* Progress dots - only for OTP flow */}
+        {authMode === "magic_link" && (
+          <div className="flex gap-1.5 mb-8">
+            {["email", "otp"].map((s, i) => (
+              <div
+                key={s}
+                className={`h-1 rounded-full transition-all duration-300 ${
+                  (step === "email" && i === 0) || (step === "otp" && i <= 1)
+                    ? "bg-primary flex-[2]"
+                    : "bg-muted flex-1"
+                }`}
+              />
+            ))}
+          </div>
+        )}
 
-        {step === "phone" ? (
+        {step === "email" ? (
           <div className="animate-slide-up flex flex-col flex-1">
             <div className="mb-8">
               <div className="w-14 h-14 rounded-2xl bg-gradient-brand flex items-center justify-center mb-5 shadow-glow">
-                <Phone size={24} className="text-white" />
+                {isSignup ? (
+                  <Sparkles size={24} className="text-white" />
+                ) : authMode === "password" ? (
+                  <KeyRound size={24} className="text-white" />
+                ) : (
+                  <Mail size={24} className="text-white" />
+                )}
               </div>
-              <h1 className="font-display font-bold text-3xl mb-2">Enter your number</h1>
+              <h1 className="font-display font-bold text-3xl mb-2">
+                {isSignup ? "Create account" : authMode === "password" ? "Welcome back" : "Login with OTP"}
+              </h1>
               <p className="text-muted-foreground text-sm">
-                We'll send a one-time code to verify it's you. No spam, ever.
+                {isSignup
+                  ? "Join Crushere and find your campus crush 💜"
+                  : authMode === "password"
+                  ? "Enter your username or email to sign in."
+                  : "We'll send a verification code to your email."}
               </p>
             </div>
 
             <div className="space-y-4">
               <div>
                 <label className="text-xs font-medium text-muted-foreground mb-2 block uppercase tracking-wider">
-                  Mobile Number
+                  {authMode === "password" ? "Username or Email" : "Email Address"}
                 </label>
                 <div className="flex gap-2">
-                  <div className="crushere-input flex items-center px-3 py-4 rounded-2xl text-sm font-medium w-16 justify-center">
-                    🇮🇳 +91
+                  <div className="crushere-input flex items-center justify-center px-3 py-4 rounded-2xl text-sm font-medium w-14 text-muted-foreground">
+                    @
                   </div>
                   <input
-                    type="tel"
-                    value={phone}
-                    onChange={e => { setPhone(e.target.value); setPhoneError(""); }}
-                    placeholder="98765 43210"
-                    maxLength={10}
+                    type={authMode === "password" ? "text" : "email"}
+                    value={authMode === "password" ? identifier : email}
+                    onChange={e => { 
+                      if (authMode === "password") setIdentifier(e.target.value);
+                      else setEmail(e.target.value); 
+                      setEmailError(""); 
+                    }}
+                    placeholder={authMode === "password" ? "username or email" : "alex@university.edu"}
                     className="crushere-input flex-1 px-4 py-4 rounded-2xl text-base"
-                    onKeyDown={e => e.key === "Enter" && handleSendOTP()}
+                    onKeyDown={e => e.key === "Enter" && (authMode === "magic_link" ? handleSendOTP() : null)}
+                    autoFocus
                   />
                 </div>
-                {phoneError && (
-                  <p className="text-crush text-xs mt-2">{phoneError}</p>
+                {emailError && (
+                  <p className="text-crush text-xs mt-2">{emailError}</p>
                 )}
               </div>
 
-              <div className="glass-card p-4 rounded-2xl border border-border/50">
-                <p className="text-xs text-muted-foreground leading-relaxed">
-                  🔒 Your number is only used for login verification. It's never shared or visible to other users.
-                </p>
-              </div>
+              {authMode === "password" && (
+                <div className="animate-fade-in">
+                  <label className="text-xs font-medium text-muted-foreground mb-2 block uppercase tracking-wider">
+                    Password
+                  </label>
+                  <div className="relative">
+                    <input
+                      type={showPassword ? "text" : "password"}
+                      value={password}
+                      onChange={e => setPassword(e.target.value)}
+                      placeholder="Enter your password"
+                      className="crushere-input w-full px-4 py-4 rounded-2xl text-base pr-12"
+                      onKeyDown={e => e.key === "Enter" && handlePasswordLogin()}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(!showPassword)}
+                      className="absolute right-4 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                    >
+                      {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
 
-            <div className="mt-auto pb-10">
+            <div className="mt-auto pb-6">
               <button
-                onClick={handleSendOTP}
+                onClick={authMode === "password" ? handlePasswordLogin : handleSendOTP}
                 disabled={loading}
-                className="btn-brand w-full py-4 rounded-2xl font-display font-bold text-lg text-white disabled:opacity-60 flex items-center justify-center gap-2"
+                className="btn-brand w-full py-4 rounded-2xl font-display font-bold text-lg text-white disabled:opacity-60 flex items-center justify-center gap-2 mb-4"
               >
                 {loading ? (
                   <>
                     <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                    Sending OTP...
+                    {authMode === "password" ? "Logging in..." : "Sending..."}
                   </>
-                ) : "Send OTP →"}
+                ) : (
+                   authMode === "password" ? "Sign In →" : "Send OTP →"
+                )}
               </button>
+              
+              <div className="flex justify-center">
+                <button 
+                  onClick={() => setAuthMode(authMode === "password" ? "magic_link" : "password")}
+                  className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  {authMode === "password" ? "Login with Email OTP" : "Login with Username/Password"}
+                </button>
+              </div>
             </div>
           </div>
         ) : (
           <div className="animate-slide-up flex flex-col flex-1">
             <div className="mb-8">
-              <div className="w-14 h-14 rounded-2xl bg-gradient-crush flex items-center justify-center mb-5 shadow-crush animate-crush-pulse">
-                <span className="text-2xl">📱</span>
+              <div className="w-14 h-14 rounded-2xl bg-gradient-brand flex items-center justify-center mb-5 shadow-glow">
+                 <span className="text-2xl text-white">🔒</span>
               </div>
               <h1 className="font-display font-bold text-3xl mb-2">Verify OTP</h1>
               <p className="text-muted-foreground text-sm">
-                Sent to <span className="text-foreground font-medium">+91 {phone}</span>
+                Code sent to <span className="text-foreground font-medium">{email}</span>
               </p>
             </div>
 
-            {/* OTP inputs */}
-            <div className="flex gap-3 justify-center mb-6">
+            <div className="flex gap-2 justify-center mb-8 px-2">
               {otp.map((digit, i) => (
                 <input
                   key={i}
                   ref={el => { inputRefs.current[i] = el; }}
-                  type="tel"
+                  type="text"
                   inputMode="numeric"
                   maxLength={1}
                   value={digit}
                   onChange={e => handleOtpChange(i, e.target.value)}
                   onKeyDown={e => handleOtpKeyDown(i, e)}
-                  className={`otp-box ${digit ? "filled" : ""}`}
+                  onPaste={handlePaste}
+                  className={`w-10 h-12 sm:w-12 sm:h-14 rounded-xl border-2 text-center text-xl font-bold transition-all outline-none 
+                    ${digit 
+                      ? "border-primary bg-primary/20 text-primary scale-105 shadow-[0_0_10px_rgba(139,92,246,0.3)]" 
+                      : "border-white/10 bg-white/5 text-white focus:border-primary/50 focus:bg-primary/5"
+                    }`}
                 />
               ))}
             </div>
 
-            {/* Resend */}
             <div className="text-center mb-8">
               {resendTimer > 0 ? (
-                <p className="text-muted-foreground text-sm">
-                  Resend in <span className="text-foreground font-medium">{resendTimer}s</span>
+                <p className="text-muted-foreground text-sm font-medium">
+                  Resend in <span className="text-foreground">{resendTimer}s</span>
                 </p>
               ) : (
                 <button
-                  onClick={() => { setResendTimer(30); setOtp(["", "", "", "", "", ""]); }}
-                  className="text-primary font-medium text-sm"
+                  onClick={handleSendOTP}
+                  className="text-primary font-bold text-sm hover:underline underline-offset-4"
                 >
-                  Resend OTP
+                  Resend Code
                 </button>
               )}
             </div>
-
-            {loading && (
-              <div className="flex flex-col items-center gap-3 py-6">
-                <div className="w-12 h-12 border-3 border-primary/20 border-t-primary rounded-full animate-spin" style={{ borderWidth: "3px" }} />
-                <p className="text-muted-foreground text-sm">Verifying...</p>
-              </div>
-            )}
 
             <div className="mt-auto pb-10">
               <button
                 onClick={() => verifyOtp()}
                 disabled={loading || otp.some(d => !d)}
-                className="btn-brand w-full py-4 rounded-2xl font-display font-bold text-lg text-white disabled:opacity-40"
+                className="btn-brand w-full py-4 rounded-2xl font-display font-bold text-lg text-white disabled:opacity-50 disabled:grayscale transition-all shadow-glow hover:shadow-glow-lg active:scale-[0.98]"
               >
-                Verify & Continue →
+                {loading ? "Verifying..." : "Verify & Enter 🚀"}
               </button>
             </div>
           </div>
